@@ -653,6 +653,7 @@ namespace Ogre {
                                                      Resource* resourceBeingLoaded,
                                                      bool throwOnFailure) const
     {
+	  LogManager::getSingleton().logMessage("ResourceGroupManager::openResourceImpl " + resourceName + " in " + groupName + ".");
         OgreAssert(!resourceName.empty(), "resourceName is empty string");
         if(mLoadingListener)
         {
@@ -675,6 +676,7 @@ namespace Ogre {
         }
 
         Archive* pArch = resourceExists(grp, resourceName);
+		LogManager::getSingleton().logMessage("ResourceGroupManager::openResourceImpl resource exists " + std::string(pArch != NULL ? "Yes" : "No") );
 
         if (pArch == NULL && (searchGroupsIfNotFound ||
             groupName == AUTODETECT_RESOURCE_GROUP_NAME || grp->inGlobalPool ||
@@ -1140,10 +1142,13 @@ namespace Ogre {
                     break;
                 }
             }
+
+
         }
 
         if (resPtr)
         {
+		  resPtr->getCreator()->_notifyResourceGroupChanged(oldGroup, resPtr);
             // New group
             ResourceGroup* newGrp = getResourceGroup(res->getGroup());
 
@@ -1230,6 +1235,7 @@ namespace Ogre {
             groupSet = true;
         }
         // delete all the load list entries
+        LogManager::getSingleton().logMessage("dropGroupContents " + grp->name);
         ResourceGroup::LoadResourceOrderMap::iterator j, jend;
         jend = grp->loadResourceOrderMap.end();
         for (j = grp->loadResourceOrderMap.begin(); j != jend; ++j)

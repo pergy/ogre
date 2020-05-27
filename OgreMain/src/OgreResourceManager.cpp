@@ -71,12 +71,13 @@ namespace Ogre {
     {
         // Lock for the whole get / insert
             OGRE_LOCK_AUTO_MUTEX;
-
+            LogManager::getSingleton().logMessage("Creat or retrieve " + name + " " + group);
         ResourcePtr res = getResourceByName(name, group);
         bool created = false;
         if (!res)
         {
             created = true;
+			LogManager::getSingleton().logMessage("Create resource");
             res = createResource(name, group, isManual, loader, params);
         }
 
@@ -103,101 +104,116 @@ namespace Ogre {
 
         return r;
     }
-    //-----------------------------------------------------------------------
+	void ResourceManager::_addImpl(ResourcePtr & res, const String & group)
+	{
+	  OGRE_LOCK_AUTO_MUTEX;
+
+	  std::pair<ResourceMap::iterator, bool> result;
+
+	  LogManager::getSingleton().logMessage("Add " + res->getName() + " " + group + ". Is global: " + std::to_string(
+		ResourceGroupManager::getSingleton().isResourceGroupInGlobalPool(group)
+	  ));
+
+	  if (ResourceGroupManager::getSingleton().isResourceGroupInGlobalPool(group))
+	  {
+		result = mResources.emplace(res->getName(), res);
+	  }
+	  else
+	  {
+		// we will create the group if it doesn't exists in our list
+		auto resgroup = mResourcesWithGroup.emplace(group, ResourceMap()).first;
+		result = resgroup->second.emplace(res->getName(), res);
+	  }
+
+	  // Attempt to resolve the collision
+	  ResourceLoadingListener* listener = ResourceGroupManager::getSingleton().getLoadingListener();
+	  if (!result.second && listener)
+	  {
+		if (listener->resourceCollision(res.get(), this) == false)
+		{
+		  // explicitly use previous instance and destroy current
+		  res.reset();
+		  return;
+		}
+
+		// Try to do the addition again, no seconds attempts to resolve collisions are allowed
+		if (ResourceGroupManager::getSingleton().isResourceGroupInGlobalPool(group))
+		{
+		  result = mResources.emplace(res->getName(), res);
+		}
+		else
+		{
+		  auto resgroup = mResourcesWithGroup.emplace(group, ResourceMap()).first;
+		  result = resgroup->second.emplace(res->getName(), res);
+		}
+	  }
+
+	  if (!result.second)
+	  {
+		OGRE_EXCEPT(Exception::ERR_DUPLICATE_ITEM, getResourceType() + " with the name " + res->getName() +
+		  " already exists.", "ResourceManager::add");
+	  }
+
+	  // Insert the handle
+	  std::pair<ResourceHandleMap::iterator, bool> resultHandle = mResourcesByHandle.emplace(res->getHandle(), res);
+	  if (!resultHandle.second)
+	  {
+		OGRE_EXCEPT(Exception::ERR_DUPLICATE_ITEM, getResourceType() + " with the handle " +
+		  StringConverter::toString((long)(res->getHandle())) +
+		  " already exists.", "ResourceManager::add");
+	  }
+	}
+	//-----------------------------------------------------------------------
     void ResourceManager::addImpl( ResourcePtr& res )
     {
-            OGRE_LOCK_AUTO_MUTEX;
-
-            std::pair<ResourceMap::iterator, bool> result;
-        if(ResourceGroupManager::getSingleton().isResourceGroupInGlobalPool(res->getGroup()))
-        {
-            result = mResources.emplace(res->getName(), res);
-        }
-        else
-        {
-            // we will create the group if it doesn't exists in our list
-            auto resgroup = mResourcesWithGroup.emplace(res->getGroup(), ResourceMap()).first;
-            result = resgroup->second.emplace(res->getName(), res);
-        }
-
-        // Attempt to resolve the collision
-        ResourceLoadingListener* listener = ResourceGroupManager::getSingleton().getLoadingListener();
-        if (!result.second && listener)
-        {
-            if(listener->resourceCollision(res.get(), this) == false)
-            {
-                // explicitly use previous instance and destroy current
-                res.reset();
-                return;
-            }
-
-            // Try to do the addition again, no seconds attempts to resolve collisions are allowed
-            if(ResourceGroupManager::getSingleton().isResourceGroupInGlobalPool(res->getGroup()))
-            {
-                result = mResources.emplace(res->getName(), res);
-            }
-            else
-            {
-                auto resgroup = mResourcesWithGroup.emplace(res->getGroup(), ResourceMap()).first;
-                result = resgroup->second.emplace(res->getName(), res);
-            }
-        }
-
-        if (!result.second)
-        {
-            OGRE_EXCEPT(Exception::ERR_DUPLICATE_ITEM, getResourceType()+" with the name " + res->getName() +
-                " already exists.", "ResourceManager::add");
-        }
-
-        // Insert the handle
-        std::pair<ResourceHandleMap::iterator, bool> resultHandle = mResourcesByHandle.emplace(res->getHandle(), res);
-        if (!resultHandle.second)
-        {
-            OGRE_EXCEPT(Exception::ERR_DUPLICATE_ITEM, getResourceType()+" with the handle " +
-                StringConverter::toString((long) (res->getHandle())) +
-                " already exists.", "ResourceManager::add");
-        }
+	  _addImpl(res, res->getGroup());
     }
+	void ResourceManager::_removeImpl(const ResourcePtr & res, const String & group)
+	{
+	  OgreAssert(res, "attempting to remove nullptr");
+
+	  OGRE_LOCK_AUTO_MUTEX;
+
+	  LogManager::getSingleton().logMessage("Remove " + res->getName() + " " + group);
+
+	  if (ResourceGroupManager::getSingleton().isResourceGroupInGlobalPool(group))
+	  {
+		ResourceMap::iterator nameIt = mResources.find(res->getName());
+		if (nameIt != mResources.end())
+		{
+		  mResources.erase(nameIt);
+		}
+	  }
+	  else
+	  {
+		ResourceWithGroupMap::iterator groupIt = mResourcesWithGroup.find(group);
+		if (groupIt != mResourcesWithGroup.end())
+		{
+		  ResourceMap::iterator nameIt = groupIt->second.find(res->getName());
+		  if (nameIt != groupIt->second.end())
+		  {
+			groupIt->second.erase(nameIt);
+		  }
+
+		  if (groupIt->second.empty())
+		  {
+			mResourcesWithGroup.erase(groupIt);
+		  }
+		}
+	  }
+
+	  ResourceHandleMap::iterator handleIt = mResourcesByHandle.find(res->getHandle());
+	  if (handleIt != mResourcesByHandle.end())
+	  {
+		mResourcesByHandle.erase(handleIt);
+	  }
+	  // Tell resource group manager
+	  ResourceGroupManager::getSingleton()._notifyResourceRemoved(res);
+	}
     //-----------------------------------------------------------------------
     void ResourceManager::removeImpl(const ResourcePtr& res )
     {
-        OgreAssert(res, "attempting to remove nullptr");
-
-        OGRE_LOCK_AUTO_MUTEX;
-
-        if(ResourceGroupManager::getSingleton().isResourceGroupInGlobalPool(res->getGroup()))
-        {
-            ResourceMap::iterator nameIt = mResources.find(res->getName());
-            if (nameIt != mResources.end())
-            {
-                mResources.erase(nameIt);
-            }
-        }
-        else
-        {
-            ResourceWithGroupMap::iterator groupIt = mResourcesWithGroup.find(res->getGroup());
-            if (groupIt != mResourcesWithGroup.end())
-            {
-                ResourceMap::iterator nameIt = groupIt->second.find(res->getName());
-                if (nameIt != groupIt->second.end())
-                {
-                    groupIt->second.erase(nameIt);
-                }
-
-                if (groupIt->second.empty())
-                {
-                    mResourcesWithGroup.erase(groupIt);
-                }
-            }
-        }
-
-        ResourceHandleMap::iterator handleIt = mResourcesByHandle.find(res->getHandle());
-        if (handleIt != mResourcesByHandle.end())
-        {
-            mResourcesByHandle.erase(handleIt);
-        }
-        // Tell resource group manager
-        ResourceGroupManager::getSingleton()._notifyResourceRemoved(res);
+	  _removeImpl(res, res->getGroup());
     }
     //-----------------------------------------------------------------------
     void ResourceManager::setMemoryBudget( size_t bytes)
@@ -364,6 +380,8 @@ namespace Ogre {
         // resource should be in global pool
         bool isGlobal = ResourceGroupManager::getSingleton().isResourceGroupInGlobalPool(groupName);
 
+        LogManager::getSingleton().logMessage("Get resource " + name + " " + groupName + " " + std::to_string(isGlobal));
+
         if(isGlobal)
         {
             ResourceMap::iterator it = mResources.find(name);
@@ -376,6 +394,7 @@ namespace Ogre {
         // look in all grouped pools
         if (groupName == ResourceGroupManager::AUTODETECT_RESOURCE_GROUP_NAME)
         {
+          LogManager::getSingleton().logMessage("Get resource AUTODETECT " + name);
             ResourceWithGroupMap::iterator iter = mResourcesWithGroup.begin();
             ResourceWithGroupMap::iterator iterE = mResourcesWithGroup.end();
             for ( ; iter != iterE ; ++iter )
@@ -467,6 +486,12 @@ namespace Ogre {
     {
         mMemoryUsage -= res->getSize();
     }
+	void ResourceManager::_notifyResourceGroupChanged(const String & oldGroup, ResourcePtr& res)
+	{
+	  LogManager::getSingleton().logMessage("ResourceManager::_notifyResourceGroupChanged " + res->getName() + " from " + oldGroup);
+	  _removeImpl(res, oldGroup);
+	  _addImpl(res, res->getGroup());
+	}
     //---------------------------------------------------------------------
     ResourceManager::ResourcePool* ResourceManager::getResourcePool(const String& name)
     {

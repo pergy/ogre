@@ -348,6 +348,8 @@ namespace Ogre {
         */
         virtual void _notifyResourceUnloaded(Resource* res);
 
+		void _notifyResourceGroupChanged(const String & oldGroup, ResourcePtr& res);
+
         /** Generic prepare method, used to create a Resource specific to this 
             ResourceManager without using one of the specialised 'prepare' methods
             (containing per-Resource-type parameters).
@@ -488,8 +490,10 @@ namespace Ogre {
         virtual Resource* createImpl(const String& name, ResourceHandle handle, 
             const String& group, bool isManual, ManualResourceLoader* loader, 
             const NameValuePairList* createParams) = 0;
+		void _addImpl(ResourcePtr& res, const String& group);
         /** Add a newly created resource to the manager (note weak reference) */
         virtual void addImpl( ResourcePtr& res );
+		void _removeImpl(const ResourcePtr& res, const String& group);
         /** Remove a resource from this manager; remove it from the lists. */
         virtual void removeImpl(const ResourcePtr& res );
         /** Checks memory usage and pages out if required. This is automatically done after a new resource is loaded.
